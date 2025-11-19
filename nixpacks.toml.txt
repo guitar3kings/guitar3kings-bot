@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ['python39']
+
+[phases.install]
+cmds = ['pip install -r requirements.txt']
+
+[start]
+cmd = 'python main.py'
+```
+3. Сохраните как `nixpacks.toml` (выберите "Все файлы")
+
+## Шаг 3: Проверьте `requirements.txt`
+
+Убедитесь что в файле `requirements.txt` есть:
+```
+python-telegram-bot==20.7
+Flask==3.0.0
+requests==2.31.0
