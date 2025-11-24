@@ -2,9 +2,6 @@ import logging
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
-from flask import Flask
-from threading import Thread
-import time
 from datetime import datetime, timedelta
 
 # Настройка логирования
@@ -12,7 +9,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Получаем токен из переменной окружения
-TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'ВАШ_ТОКЕН_ОТ_BOTFATHER')
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 
 # ВАШ Telegram ID для уведомлений
 ADMIN_ID = 5094488507
@@ -161,7 +158,7 @@ async def notify_admin(context: ContextTypes.DEFAULT_TYPE, message: str):
     """Отправляет уведомление администратору"""
     try:
         await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode='Markdown')
-        logger.info(f"Admin notification sent: {message}")
+        logger.info(f"Admin notification sent")
     except Exception as e:
         logger.error(f"Failed to send admin notification: {e}")
 
@@ -170,7 +167,7 @@ def log_user_action(user, action):
     """Логирует действия пользователя"""
     username = user.username if user.username else "без username"
     full_name = f"{user.first_name} {user.last_name if user.last_name else ''}".strip()
-    log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] User @{username} ({full_name}, ID: {user.id}) - {action}"
+    log_message = f"User @{username} ({full_name}, ID: {user.id}) - {action}"
     logger.info(log_message)
     return log_message
 
@@ -179,9 +176,9 @@ def get_available_dates(offset=0):
     """Возвращает список дат начиная с сегодня + offset до 14 дней"""
     dates = []
     start_date = datetime.now().date() + timedelta(days=offset)
-    for i in range(7):  # Показываем по 7 дней
+    for i in range(7):
         date = start_date + timedelta(days=i)
-        if (date - datetime.now().date()).days <= 14:  # Максимум 2 недели
+        if (date - datetime.now().date()).days <= 14:
             dates.append(date)
     return dates
 
@@ -237,11 +234,10 @@ def get_days_keyboard(offset=0):
         date_str = format_date(date)
         keyboard.append([InlineKeyboardButton(date_str, callback_data=f'date_{date.isoformat()}')])
     
-    # Кнопки навигации
     nav_buttons = []
     if offset > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Раньше", callback_data=f'dates_prev_{offset}'))
-    if offset + 7 <= 14:  # Если ещё есть даты впереди
+    if offset + 7 <= 14:
         nav_buttons.append(InlineKeyboardButton("Позже ➡️", callback_data=f'dates_next_{offset}'))
     
     if nav_buttons:
@@ -267,7 +263,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     log_user_action(user, "Запустил бота /start")
     
-    # Уведомление админу о новом пользователе
     await notify_admin(
         context,
         f"🆕 *Новый пользователь!*\n"
@@ -277,7 +272,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     try:
-        # Пробуем отправить фото
         await update.message.reply_photo(
             photo=WELCOME_PHOTO,
             caption=WELCOME_TEXT,
@@ -285,7 +279,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logger.error(f"Failed to send photo: {e}")
-        # Если фото не загружается, отправляем текст
         await update.message.reply_text(
             WELCOME_TEXT,
             reply_markup=get_main_keyboard()
@@ -351,13 +344,11 @@ async def timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return CUSTOM_TIMEZONE
     
-    # Сохраняем выбранный часовой пояс
     tz_key = query.data.replace('tz_', '')
     context.user_data['timezone'] = TIMEZONES[tz_key]
     context.user_data['date_offset'] = 0
     log_user_action(user, f"Выбрал часовой пояс: {TIMEZONES[tz_key]}")
     
-    # Показываем выбор дня
     await query.message.reply_text(
         f"✅ Часовой пояс: **{TIMEZONES[tz_key]}**\n\n"
         "📅 **Выберите день:**",
@@ -400,7 +391,6 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     await query.answer()
     
-    # Навигация по датам
     if query.data.startswith('dates_prev_'):
         offset = int(query.data.split('_')[2])
         new_offset = max(0, offset - 7)
@@ -433,14 +423,12 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return TIMEZONE
     
-    # Сохраняем выбранный день
     date_str = query.data.replace('date_', '')
     selected_date = datetime.fromisoformat(date_str).date()
     context.user_data['date'] = selected_date
     context.user_data['date_formatted'] = format_date(selected_date)
     log_user_action(user, f"Выбрал день: {format_date(selected_date)}")
     
-    # Показываем выбор времени
     await query.message.reply_text(
         f"✅ Часовой пояс: **{context.user_data['timezone']}**\n"
         f"✅ День: **{format_date(selected_date)}**\n\n"
@@ -466,13 +454,11 @@ async def time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return DAY
     
-    # Сохраняем выбранное время
     time_index = int(query.data.replace('time_', ''))
     selected_time = TIME_SLOTS[time_index]
     
     log_user_action(user, f"Записался: {context.user_data['date_formatted']}, {selected_time}, {context.user_data['timezone']}")
     
-    # Отправляем подтверждение клиенту
     await query.message.reply_text(
         f"✅ **Заявка принята!**\n\n"
         f"📅 День: **{context.user_data['date_formatted']}**\n"
@@ -484,7 +470,6 @@ async def time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
     
-    # Отправляем уведомление админу
     username = f"@{user.username}" if user.username else "без username"
     full_name = f"{user.first_name} {user.last_name if user.last_name else ''}".strip()
     
@@ -528,7 +513,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     log_user_action(user, f"Написал сообщение: {user_message}")
     
-    # Уведомляем админа о сообщении
     username = f"@{user.username}" if user.username else "без username"
     full_name = f"{user.first_name} {user.last_name if user.last_name else ''}".strip()
     
@@ -541,7 +525,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Ответьте клиенту: {username if user.username else f'tg://user?id={user.id}'}"
     )
     
-    # Автоответ клиенту
     await update.message.reply_text(
         "Спасибо за сообщение! ✅\n\n"
         "Александр получил ваше сообщение и ответит в ближайшее время.\n\n"
@@ -551,6 +534,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Запуск бота"""
+    if not TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN not found!")
+        return
+    
     application = Application.builder().token(TOKEN).build()
     
     # ConversationHandler для процесса записи
@@ -574,40 +561,5 @@ def main():
     logger.info("Бот запущен и работает 24/7!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Веб-сервер для keep-alive (для работы 24/7)
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Бот работает! 🎸"
-
-@app.route('/health')
-def health():
-    return "OK", 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    """Поддерживает бота активным"""
-    import requests
-    while True:
-        try:
-            time.sleep(300)  # 5 минут
-            requests.get('http://0.0.0.0:8080/health', timeout=5)
-            logger.info("Keep-alive ping sent")
-        except Exception as e:
-            logger.error(f"Keep-alive error: {e}")
-
 if __name__ == '__main__':
-    # Запускаем Flask в отдельном потоке
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # Запускаем keep-alive в отдельном потоке
-    keepalive_thread = Thread(target=keep_alive, daemon=True)
-    keepalive_thread.start()
-    
-    # Запускаем бота
     main()
-    
