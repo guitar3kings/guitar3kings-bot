@@ -16,8 +16,6 @@ SCHEDULE_FILE = 'schedule.json'
 
 # Состояния для ConversationHandler
 LEVEL, INSTRUMENT, TIMEZONE, DAY, TIME, CUSTOM_TIMEZONE = range(6)
-ADMIN_MENU, ADMIN_BLOCK_TYPE, ADMIN_BLOCK_DAY, ADMIN_BLOCK_TIME = range(6, 10)
-ADMIN_UNBLOCK_TYPE, ADMIN_UNBLOCK_DAY, ADMIN_UNBLOCK_TIME = range(10, 13)
 
 # Постоянное расписание по умолчанию
 DEFAULT_WEEKLY_SCHEDULE = {
@@ -207,47 +205,6 @@ def get_time_keyboard(date):
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='back_to_days')])
     return InlineKeyboardMarkup(keyboard)
 
-def get_admin_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 Просмотр расписания", callback_data='admin_view')],
-        [InlineKeyboardButton("🚫 Заблокировать время", callback_data='admin_block')],
-        [InlineKeyboardButton("✅ Разблокировать время", callback_data='admin_unblock')],
-        [InlineKeyboardButton("❌ Закрыть", callback_data='admin_close')]
-    ])
-
-def get_block_type_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📆 Постоянно (каждую неделю)", callback_data='block_weekly')],
-        [InlineKeyboardButton("📅 На конкретную дату", callback_data='block_specific')],
-        [InlineKeyboardButton("⬅️ Назад", callback_data='admin_back')]
-    ])
-
-def get_weekday_keyboard():
-    keyboard = [[InlineKeyboardButton(day, callback_data=f'wday_{WEEKDAYS_EN[i]}')] for i, day in enumerate(WEEKDAYS_RU)]
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='admin_back')])
-    return InlineKeyboardMarkup(keyboard)
-
-def get_time_select_keyboard(blocked_times=None):
-    keyboard = []
-    for i in range(0, len(TIME_SLOTS), 2):
-        row = []
-        slot1 = TIME_SLOTS[i]
-        is_blocked1 = blocked_times and slot1 in blocked_times
-        row.append(InlineKeyboardButton(
-            f"{'🚫' if is_blocked1 else '✅'} {slot1}",
-            callback_data=f'tsel_{slot1}'
-        ))
-        if i + 1 < len(TIME_SLOTS):
-            slot2 = TIME_SLOTS[i + 1]
-            is_blocked2 = blocked_times and slot2 in blocked_times
-            row.append(InlineKeyboardButton(
-                f"{'🚫' if is_blocked2 else '✅'} {slot2}",
-                callback_data=f'tsel_{slot2}'
-            ))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='admin_back')])
-    return InlineKeyboardMarkup(keyboard)
-
 # Обработчики
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -400,128 +357,37 @@ async def time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
-# Админ-панель
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Нет доступа")
-        return ConversationHandler.END
-    
-    await update.message.reply_text("🔧 **АДМИН-ПАНЕЛЬ**", parse_mode='Markdown', reply_markup=get_admin_keyboard())
-    return ADMIN_MENU
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Запись отменена.", reply_markup=get_main_keyboard())
+    return ConversationHandler.END
 
-async def admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+def main():
+    application = Application.builder().token(TOKEN).build()
     
-    if query.data == 'admin_close':
-        await query.message.delete()
-        return ConversationHandler.END
+    # ConversationHandler для записи
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler, pattern='^start_booking$')],
+        states={
+            LEVEL: [CallbackQueryHandler(level_handler)],
+            INSTRUMENT: [CallbackQueryHandler(instrument_handler)],
+            TIMEZONE: [CallbackQueryHandler(timezone_handler)],
+            CUSTOM_TIMEZONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_timezone_handler)],
+            DAY: [CallbackQueryHandler(day_handler)],
+            TIME: [CallbackQueryHandler(time_handler)],
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            CallbackQueryHandler(button_handler, pattern='^back_to_main$'),
+            CallbackQueryHandler(button_handler, pattern='^trial$')
+        ],
+    )
     
-    elif query.data == 'admin_view':
-        text = "📅 **ТЕКУЩЕЕ РАСПИСАНИЕ**\n\n**Постоянно заблокировано:**\n"
-        for day, slots in SCHEDULE['weekly_blocked'].items():
-            if slots:
-                day_ru = WEEKDAYS_RU[WEEKDAYS_EN.index(day)]
-                text += f"\n**{day_ru}:**\n" + "\n".join(f"• {s}" for s in slots)
-        
-        if SCHEDULE['specific_dates']:
-            text += "\n\n**Конкретные даты:**\n"
-            for date_str, slots in sorted(SCHEDULE['specific_dates'].items()):
-                if slots:
-                    date = datetime.fromisoformat(date_str).date()
-                    text += f"\n**{format_date(date)}:**\n" + "\n".join(f"• {s}" for s in slots)
-        
-        await query.message.reply_text(text, parse_mode='Markdown', reply_markup=get_admin_keyboard())
-        return ADMIN_MENU
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(button_handler))
     
-    elif query.data == 'admin_block':
-        await query.message.reply_text("**Тип блокировки:**", parse_mode='Markdown', reply_markup=get_block_type_keyboard())
-        return ADMIN_BLOCK_TYPE
-    
-    elif query.data == 'admin_unblock':
-        await query.message.reply_text("**Тип разблокировки:**", parse_mode='Markdown', reply_markup=get_block_type_keyboard())
-        return ADMIN_UNBLOCK_TYPE
+    logger.info("Бот запущен...")
+    application.run_polling()
 
-async def admin_block_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'admin_back':
-        await query.message.reply_text("🔧 **АДМИН-ПАНЕЛЬ**", parse_mode='Markdown', reply_markup=get_admin_keyboard())
-        return ADMIN_MENU
-    
-    context.user_data['block_type'] = query.data
-    
-    if query.data == 'block_weekly':
-        await query.message.reply_text("**Выберите день недели:**", parse_mode='Markdown', reply_markup=get_weekday_keyboard())
-    else:
-        await query.message.reply_text("**Выберите дату:**", parse_mode='Markdown', reply_markup=get_days_keyboard(0))
-    
-    return ADMIN_BLOCK_DAY
-
-async def admin_block_day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'admin_back':
-        await query.message.reply_text("**Тип блокировки:**", parse_mode='Markdown', reply_markup=get_block_type_keyboard())
-        return ADMIN_BLOCK_TYPE
-    
-    if query.data.startswith('wday_'):
-        weekday = query.data.replace('wday_', '')
-        context.user_data['selected_day'] = weekday
-        blocked = SCHEDULE['weekly_blocked'].get(weekday, [])
-        await query.message.reply_text(f"**Выберите время для блокировки:**\n🚫 - заблокировано\n✅ - свободно",
-                                      parse_mode='Markdown', reply_markup=get_time_select_keyboard(blocked))
-    else:
-        date_str = query.data.replace('date_', '')
-        context.user_data['selected_date'] = date_str
-        blocked = SCHEDULE['specific_dates'].get(date_str, [])
-        await query.message.reply_text(f"**Выберите время для блокировки:**\n🚫 - заблокировано\n✅ - свободно",
-                                      parse_mode='Markdown', reply_markup=get_time_select_keyboard(blocked))
-    
-    return ADMIN_BLOCK_TIME
-
-async def admin_block_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'admin_back':
-        if context.user_data['block_type'] == 'block_weekly':
-            await query.message.reply_text("**Выберите день недели:**", parse_mode='Markdown', reply_markup=get_weekday_keyboard())
-        else:
-            await query.message.reply_text("**Выберите дату:**", parse_mode='Markdown', reply_markup=get_days_keyboard(0))
-        return ADMIN_BLOCK_DAY
-    
-    time_slot = query.data.replace('tsel_', '')
-    
-    if 'selected_day' in context.user_data:
-        weekday = context.user_data['selected_day']
-        if weekday not in SCHEDULE['weekly_blocked']:
-            SCHEDULE['weekly_blocked'][weekday] = []
-        if time_slot not in SCHEDULE['weekly_blocked'][weekday]:
-            SCHEDULE['weekly_blocked'][weekday].append(time_slot)
-            SCHEDULE['weekly_blocked'][weekday].sort()
-            save_schedule(SCHEDULE)
-            await query.answer("✅ Заблокировано!")
-        else:
-            await query.answer("⚠️ Уже заблокировано")
-        
-        blocked = SCHEDULE['weekly_blocked'][weekday]
-        await query.edit_message_reply_markup(reply_markup=get_time_select_keyboard(blocked))
-    else:
-        date_str = context.user_data['selected_date']
-        if date_str not in SCHEDULE['specific_dates']:
-            SCHEDULE['specific_dates'][date_str] = []
-        if time_slot not in SCHEDULE['specific_dates'][date_str]:
-            SCHEDULE['specific_dates'][date_str].append(time_slot)
-            SCHEDULE['specific_dates'][date_str].sort()
-            save_schedule(SCHEDULE)
-            await query.answer("✅ Заблокировано!")
-        else:
-            await query.answer("⚠️ Уже заблокировано")
-        
-        blocked = SCHEDULE['specific_dates'][date_str]
-        await query.edit_message_reply_markup(reply_markup=get_time_select_keyboard(blocked))
-    
-    return
+if __name__ == '__main__':
+    main()
